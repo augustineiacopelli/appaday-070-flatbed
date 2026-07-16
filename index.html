@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flatbed &middot; AppADay 070</title>
+<meta name="description" content="A pocket flatbed scanner. Finds the page edges, straightens the shot, and sends it out as a PDF.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=Martian+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+<style>
+  :root{
+    --housing:#c7c2b2;
+    --housing-hi:#d8d4c6;
+    --housing-lo:#a9a496;
+    --platen:#17181a;
+    --platen-soft:#232529;
+    --paper:#faf8f2;
+    --lamp:#23d3c4;
+    --signal:#f2a93b;
+    --alert:#d95b43;
+    --ink:#17181a;
+    --ink-soft:rgba(23,24,26,.58);
+    --rule:rgba(23,24,26,.18);
+    --pad:16px;
+    --disp:'Archivo',system-ui,sans-serif;
+    --mono:'Martian Mono','SFMono-Regular',Menlo,monospace;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  [hidden]{display:none !important}
+  html,body{margin:0;padding:0}
+  body{
+    min-height:100dvh;
+    display:flex;
+    flex-direction:column;
+    background:var(--housing);
+    background-image:
+      linear-gradient(180deg,rgba(255,255,255,.28),rgba(0,0,0,0) 240px),
+      repeating-linear-gradient(90deg,rgba(23,24,26,.035) 0 1px,rgba(0,0,0,0) 1px 4px);
+    color:var(--ink);
+    font-family:var(--disp);
+    font-size:16px;
+    line-height:1.45;
+    overflow-x:hidden;
+  }
+  button{font-family:inherit;color:inherit;border:none;background:none;cursor:pointer}
+  :focus-visible{outline:3px solid var(--lamp);outline-offset:2px}
+
+  /* ---------- header ---------- */
+  .bar{
+    flex:0 0 auto;
+    display:flex;align-items:center;gap:12px;
+    padding:calc(env(safe-area-inset-top) + 10px) var(--pad) 10px;
+    border-bottom:1px solid var(--rule);
+    background:linear-gradient(180deg,var(--housing-hi),var(--housing));
+  }
+  .badge{
+    font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.06em;
+    background:var(--platen);color:var(--housing-hi);
+    padding:5px 8px;border-radius:3px;
+  }
+  .bar h1{
+    margin:0;font-size:17px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+  }
+  .bar .home{
+    margin-left:auto;font-family:var(--mono);font-size:11px;letter-spacing:.04em;
+    text-decoration:none;color:var(--ink-soft);border-bottom:1px solid var(--rule);
+    padding-bottom:2px;
+  }
+  .bar .home:hover{color:var(--ink);border-color:var(--ink)}
+
+  /* ---------- status strip ---------- */
+  .status{
+    flex:0 0 auto;
+    display:flex;align-items:center;gap:10px;
+    padding:8px var(--pad);
+    background:var(--platen);color:var(--housing);
+    font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  }
+  .lamp{
+    width:9px;height:9px;border-radius:50%;flex:0 0 auto;
+    background:var(--housing-lo);box-shadow:none;
+    transition:background .18s,box-shadow .18s;
+  }
+  .lamp[data-on="ready"]{background:var(--lamp);box-shadow:0 0 10px var(--lamp)}
+  .lamp[data-on="wait"]{background:var(--signal);box-shadow:0 0 10px var(--signal)}
+  .lamp[data-on="busy"]{background:var(--lamp);box-shadow:0 0 10px var(--lamp);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.25}}
+  .status .count{margin-left:auto;color:var(--housing-lo)}
+
+  /* ---------- screens ---------- */
+  main{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+  .screen{display:none;flex:1 1 auto;min-height:0;flex-direction:column}
+  .screen.on{display:flex}
+
+  /* ---------- tray ---------- */
+  #tray{padding:var(--pad);gap:var(--pad)}
+  .tray-head{display:flex;align-items:baseline;gap:10px}
+  .tray-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.16em;text-transform:uppercase}
+  .tray-head span{font-family:var(--mono);font-size:11px;color:var(--ink-soft)}
+  .empty{
+    flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;gap:10px;padding:32px 8px;
+    border:2px dashed var(--rule);border-radius:6px;background:rgba(255,255,255,.22);
+  }
+  .empty strong{font-size:19px;font-weight:800;letter-spacing:.02em}
+  .empty p{margin:0;max-width:30ch;color:var(--ink-soft);font-size:14px}
+  .pages{
+    flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));
+    gap:14px;align-content:start;padding:2px;
+  }
+  .page-card{
+    position:relative;background:var(--paper);border-radius:4px;overflow:hidden;
+    box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 6px 16px rgba(23,24,26,.22);
+    border:1px solid rgba(23,24,26,.12);
+    display:flex;flex-direction:column;text-align:left;width:100%;padding:0;
+  }
+  .page-card canvas{width:100%;height:auto;display:block;background:var(--paper)}
+  .page-card .tag{
+    display:flex;justify-content:space-between;align-items:center;gap:6px;
+    padding:6px 8px;border-top:1px solid var(--rule);
+    font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--ink-soft);
+  }
+  .page-card:active{transform:translateY(1px)}
+  .drop-hint{
+    font-family:var(--mono);font-size:10px;color:var(--ink-soft);letter-spacing:.04em;text-align:center;
+  }
+
+  /* ---------- controls ---------- */
+  .controls{
+    flex:0 0 auto;display:grid;gap:10px;
+    padding:12px var(--pad) calc(env(safe-area-inset-bottom) + 14px);
+    border-top:1px solid var(--rule);
+    background:linear-gradient(180deg,var(--housing),var(--housing-lo));
+  }
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .row.three{grid-template-columns:repeat(3,1fr)}
+  .row.three .btn{font-size:11px;padding:0 8px;min-height:46px;letter-spacing:.1em}
+  .btn{
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    min-height:52px;padding:0 14px;border-radius:4px;
+    font-size:13px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+    background:var(--housing-hi);border:1px solid rgba(23,24,26,.24);
+    box-shadow:0 2px 0 rgba(23,24,26,.28),0 1px 0 rgba(255,255,255,.6) inset;
+  }
+  .btn:active{transform:translateY(2px);box-shadow:0 0 0 rgba(23,24,26,.28)}
+  .btn.primary{background:var(--platen);color:var(--paper);border-color:var(--platen)}
+  .btn.lamp-btn{background:var(--lamp);border-color:#12a494;color:var(--platen)}
+  .btn[disabled]{opacity:.4;pointer-events:none}
+  .btn svg{width:18px;height:18px;flex:0 0 auto}
+  .btn.wide{grid-column:1 / -1}
+
+  /* ---------- camera ---------- */
+  #cam{background:var(--platen);position:relative}
+  .view{
+    position:relative;flex:1 1 auto;min-height:0;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;background:#000;
+  }
+  #video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+  #overlay{position:absolute;inset:0;width:100%;height:100%}
+  .hint{
+    position:absolute;left:50%;top:16px;transform:translateX(-50%);
+    background:rgba(23,24,26,.82);color:var(--paper);
+    font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+    padding:8px 12px;border-radius:3px;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis;
+    transition:opacity .2s;
+  }
+  .sweep{
+    position:absolute;left:0;right:0;height:3px;top:0;
+    background:var(--lamp);box-shadow:0 0 26px 8px rgba(35,211,196,.65);
+    opacity:0;pointer-events:none;
+  }
+  .sweep.run{animation:sweep 1.1s cubic-bezier(.5,0,.5,1) infinite;opacity:1}
+  @keyframes sweep{0%{top:0}100%{top:100%}}
+  .cam-bar{
+    flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:14px var(--pad) calc(env(safe-area-inset-bottom) + 16px);
+    background:var(--platen);color:var(--housing);
+  }
+  .chip{
+    font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+    border:1px solid rgba(199,194,178,.4);border-radius:3px;padding:9px 11px;min-height:40px;
+    display:flex;align-items:center;gap:6px;color:var(--housing);
+  }
+  .chip[aria-pressed="true"]{background:var(--lamp);border-color:var(--lamp);color:var(--platen)}
+  .shutter{
+    position:relative;width:74px;height:74px;border-radius:50%;flex:0 0 auto;
+    background:var(--paper);border:3px solid var(--platen);
+    box-shadow:0 0 0 3px var(--housing);
+  }
+  .shutter:active{transform:scale(.94)}
+  .shutter svg{position:absolute;inset:-9px;width:calc(100% + 18px);height:calc(100% + 18px);pointer-events:none}
+  .shutter .ring{fill:none;stroke:var(--signal);stroke-width:4;stroke-linecap:round;
+    transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .12s linear}
+
+  /* ---------- edit ---------- */
+  #edit{background:var(--platen-soft)}
+  .stage{
+    flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;
+    padding:14px;position:relative;overflow:hidden;
+  }
+  .sheet{position:relative;max-width:100%;max-height:100%;box-shadow:0 10px 40px rgba(0,0,0,.55)}
+  .sheet canvas{display:block;max-width:100%;max-height:100%;width:auto;height:auto;background:var(--paper)}
+  #cropLayer{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+  .filters{
+    flex:0 0 auto;display:flex;gap:8px;overflow-x:auto;padding:10px var(--pad);
+    border-top:1px solid rgba(199,194,178,.18);
+  }
+  .filters .chip{white-space:nowrap}
+  .tools{
+    flex:0 0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;
+    padding:10px var(--pad) calc(env(safe-area-inset-bottom) + 14px);
+    background:var(--platen);
+  }
+  .tool{
+    display:flex;flex-direction:column;align-items:center;gap:5px;padding:8px 2px;
+    font-family:var(--mono);font-size:10px;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--housing);border-radius:4px;min-height:56px;justify-content:center;
+  }
+  .tool svg{width:20px;height:20px}
+  .tool[aria-pressed="true"]{background:rgba(35,211,196,.16);color:var(--lamp)}
+  .tool.danger{color:var(--alert)}
+  .edit-head{
+    flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:10px var(--pad);color:var(--housing);
+    font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  }
+  .edit-head button{color:var(--lamp);font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:8px;min-height:40px}
+
+  /* ---------- modal ---------- */
+  .veil{
+    position:fixed;inset:0;z-index:50;background:rgba(23,24,26,.72);
+    display:none;align-items:center;justify-content:center;padding:20px;
+  }
+  .veil.on{display:flex}
+  .modal{
+    background:var(--housing-hi);border-radius:6px;padding:20px;max-width:340px;width:100%;
+    border:1px solid rgba(23,24,26,.3);box-shadow:0 24px 60px rgba(0,0,0,.5);
+  }
+  .modal h3{margin:0 0 8px;font-size:15px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+  .modal p{margin:0 0 16px;font-size:14px;color:var(--ink-soft)}
+  .modal .row{margin-top:4px}
+  .toast{
+    position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 22px);transform:translateX(-50%) translateY(16px);
+    background:var(--platen);color:var(--paper);border-radius:3px;padding:10px 14px;z-index:60;
+    font-family:var(--mono);font-size:11px;letter-spacing:.04em;opacity:0;pointer-events:none;
+    transition:opacity .2s,transform .2s;max-width:90vw;text-align:center;
+  }
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+  @media (min-width:760px){
+    :root{--pad:24px}
+    body{align-items:center}
+    .bar,.status,main,.controls{width:100%;max-width:900px;margin-inline:auto}
+    main{border-inline:1px solid var(--rule)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .sweep.run{animation:none;top:50%}
+    .lamp[data-on="busy"]{animation:none}
+    *{transition:none !important}
+  }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <span class="badge">070</span>
+  <h1>Flatbed</h1>
+  <a class="home" href="https://augustineiacopelli.github.io/appaday/">AppADay &#8599;</a>
+</header>
+
+<div class="status">
+  <span class="lamp" id="lamp" data-on="off"></span>
+  <span id="statusText">Standby</span>
+  <span class="count" id="statusCount">0 pages</span>
+</div>
+
+<main>
+  <!-- ============ TRAY ============ -->
+  <section class="screen on" id="tray" aria-label="Feed tray">
+    <div class="tray-head">
+      <h2>Feed tray</h2>
+      <span id="trayNote">Session only &middot; nothing is uploaded</span>
+    </div>
+    <div class="empty" id="empty">
+      <strong>The tray is empty</strong>
+      <p>Scan a page and Flatbed finds its edges, squares it up, and holds it here until you export.</p>
+    </div>
+    <div class="pages" id="pages" hidden></div>
+    <p class="drop-hint" id="dropHint" hidden>Tap a page to edit it</p>
+  </section>
+
+  <!-- ============ CAMERA ============ -->
+  <section class="screen" id="cam" aria-label="Camera">
+    <div class="view">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      <div class="sweep" id="camSweep"></div>
+      <div class="hint" id="hint">Starting camera</div>
+    </div>
+    <div class="cam-bar">
+      <button class="chip" id="autoBtn" aria-pressed="true">Auto</button>
+      <button class="shutter" id="shutter" aria-label="Capture page">
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <circle class="ring" id="ring" cx="50" cy="50" r="46" stroke-dasharray="289" stroke-dashoffset="289"></circle>
+        </svg>
+      </button>
+      <button class="chip" id="closeCam">Done</button>
+    </div>
+  </section>
+
+  <!-- ============ EDIT ============ -->
+  <section class="screen" id="edit" aria-label="Page editor">
+    <div class="edit-head">
+      <button id="editBack">&#8592; Tray</button>
+      <span id="editLabel">Page 1</span>
+      <button id="cropDone" hidden>Apply crop</button>
+    </div>
+    <div class="stage">
+      <div class="sheet" id="sheet">
+        <canvas id="editCanvas"></canvas>
+        <canvas id="cropLayer" hidden></canvas>
+      </div>
+      <div class="sweep" id="editSweep"></div>
+    </div>
+    <div class="filters" id="filters"></div>
+    <div class="tools">
+      <button class="tool" id="tCrop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2v16h16M2 6h16v16"/></svg>Corners</button>
+      <button class="tool" id="tRotate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v5h-5"/></svg>Rotate</button>
+      <button class="tool" id="tReset"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h18M12 3v18"/></svg>Full page</button>
+      <button class="tool danger" id="tDelete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15"/></svg>Delete</button>
+    </div>
+  </section>
+</main>
+
+<div class="controls" id="controls">
+  <div class="row">
+    <button class="btn primary" id="scanBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M3 12h18"/></svg>
+      Scan
+    </button>
+    <button class="btn" id="importBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6"/><circle cx="8.5" cy="9.5" r="1.5"/></svg>
+      Import
+    </button>
+  </div>
+  <div class="row">
+    <button class="btn lamp-btn wide" id="sendBtn" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 5h18v14H3zM3 6l9 7 9-7"/></svg>
+      Email as PDF
+    </button>
+  </div>
+  <div class="row three">
+    <button class="btn" id="pdfBtn" disabled>Save PDF</button>
+    <button class="btn" id="jpgBtn" disabled>Save JPG</button>
+    <button class="btn" id="clearBtn" disabled>Clear tray</button>
+  </div>
+</div>
+
+<input type="file" id="fileIn" accept="image/*" multiple hidden>
+
+<div class="veil" id="veil">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <h3 id="mTitle">Clear the tray?</h3>
+    <p id="mBody">Every scanned page is dropped. This cannot be undone.</p>
+    <div class="row">
+      <button class="btn" id="mCancel">Cancel</button>
+      <button class="btn primary" id="mOk">Clear</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+<p class="sr" id="live" role="status" aria-live="polite"></p>
+
+<script>
+(function(){
+'use strict';
+
+/* ============================================================
+   Flatbed -- AppADay 070
+   A pocket flatbed scanner: edge detection, auto capture,
+   perspective correction, adaptive B/W, PDF/JPG/email out.
+   ============================================================ */
+
+var PAGES = [];          /* {src:canvas, quad:[{x,y}x4], filter, rot, out:canvas} */
+var current = -1;
+var stream = null, rafId = 0, detecting = false;
+var lastQuad = null, stableSince = 0, stableQuad = null, autoMode = true, capturing = false;
+var cropping = false, cropPts = null, dragIdx = -1;
+
+var FILTERS = [
+  {id:'original', label:'Original'},
+  {id:'enhance',  label:'Enhance'},
+  {id:'bw',       label:'B/W'},
+  {id:'gray',     label:'Grayscale'}
+];
+
+var $ = function(id){ return document.getElementById(id); };
+var video=$('video'), overlay=$('overlay'), octx=overlay.getContext('2d');
+var editCanvas=$('editCanvas'), cropLayer=$('cropLayer');
+var HOLD = 900;          /* ms of stillness before auto capture */
+var MAX_SRC = 1400;      /* stored source frame long edge */
+var MAX_OUT = 1500;      /* unwarped page long edge */
+
+/* ---------------- small helpers ---------------- */
+function show(id){
+  var s = document.querySelectorAll('.screen');
+  for(var i=0;i<s.length;i++){ s[i].classList.toggle('on', s[i].id===id); }
+  $('controls').hidden = (id !== 'tray');
+}
+function setLamp(state, text){
+  $('lamp').setAttribute('data-on', state);
+  $('statusText').textContent = text;
+}
+var toastT = 0;
+function toast(msg){
+  var t = $('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(toastT);
+  toastT = setTimeout(function(){ t.classList.remove('on'); }, 2600);
+  $('live').textContent = msg;
+}
+function updateCount(){
+  var n = PAGES.length;
+  $('statusCount').textContent = n + (n===1 ? ' page' : ' pages');
+  var has = n > 0;
+  $('pdfBtn').disabled = !has; $('jpgBtn').disabled = !has;
+  $('sendBtn').disabled = !has; $('clearBtn').disabled = !has;
+  $('empty').hidden = has; $('pages').hidden = !has; $('dropHint').hidden = !has;
+  if(!capturing && !stream) setLamp(has ? 'ready' : 'off', has ? 'Ready' : 'Standby');
+}
+function stamp(){
+  var d = new Date(), p = function(v){ return (v<10?'0':'')+v; };
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+}
+function fitCanvas(w,h,max){
+  var s = Math.min(1, max/Math.max(w,h));
+  return {w:Math.max(1,Math.round(w*s)), h:Math.max(1,Math.round(h*s))};
+}
+function makeCanvas(w,h){
+  var c = document.createElement('canvas'); c.width=w; c.height=h; return c;
+}
+
+/* ============================================================
+   1. PAGE DETECTION
+   downscale -> gray -> blur -> Otsu -> largest blob ->
+   convex hull -> max-area quadrilateral
+   ============================================================ */
+function toGray(img){
+  var d=img.data, n=img.width*img.height, g=new Float32Array(n), i;
+  for(i=0;i<n;i++){ g[i] = 0.299*d[i*4] + 0.587*d[i*4+1] + 0.114*d[i*4+2]; }
+  return g;
+}
+function blur(g,w,h){
+  var t=new Float32Array(g.length), o=new Float32Array(g.length), x,y,i,s;
+  for(y=0;y<h;y++){ for(x=0;x<w;x++){
+    i=y*w+x; s=0;
+    s += g[i] + g[y*w+Math.max(0,x-1)] + g[y*w+Math.min(w-1,x+1)];
+    t[i]=s/3;
+  }}
+  for(y=0;y<h;y++){ for(x=0;x<w;x++){
+    i=y*w+x; s=0;
+    s += t[i] + t[Math.max(0,y-1)*w+x] + t[Math.min(h-1,y+1)*w+x];
+    o[i]=s/3;
+  }}
+  return o;
+}
+function otsu(g){
+  var hist=new Array(256), i;
+  for(i=0;i<256;i++) hist[i]=0;
+  for(i=0;i<g.length;i++) hist[g[i]|0]++;
+  var total=g.length, sum=0;
+  for(i=0;i<256;i++) sum += i*hist[i];
+  var sumB=0, wB=0, wF=0, best=0, thr=127;
+  for(i=0;i<256;i++){
+    wB += hist[i]; if(wB===0) continue;
+    wF = total - wB; if(wF===0) break;
+    sumB += i*hist[i];
+    var mB=sumB/wB, mF=(sum-sumB)/wF, v=wB*wF*(mB-mF)*(mB-mF);
+    if(v>best){ best=v; thr=i; }
+  }
+  return thr;
+}
+/* largest connected blob of mask===1, returns per-row min/max x */
+function largestBlob(mask,w,h){
+  var lab=new Int32Array(w*h), stack=new Int32Array(w*h), id=0, bestId=0, bestN=0, i;
+  for(i=0;i<w*h;i++){
+    if(mask[i]!==1 || lab[i]!==0) continue;
+    id++; var sp=0, n=0;
+    stack[sp++]=i; lab[i]=id;
+    while(sp>0){
+      var p=stack[--sp]; n++;
+      var x=p%w, y=(p-x)/w;
+      if(x>0   && mask[p-1]===1 && lab[p-1]===0){ lab[p-1]=id; stack[sp++]=p-1; }
+      if(x<w-1 && mask[p+1]===1 && lab[p+1]===0){ lab[p+1]=id; stack[sp++]=p+1; }
+      if(y>0   && mask[p-w]===1 && lab[p-w]===0){ lab[p-w]=id; stack[sp++]=p-w; }
+      if(y<h-1 && mask[p+w]===1 && lab[p+w]===0){ lab[p+w]=id; stack[sp++]=p+w; }
+    }
+    if(n>bestN){ bestN=n; bestId=id; }
+  }
+  if(!bestId) return null;
+  var pts=[], edgeTouch=0, x2, y2;
+  for(y2=0;y2<h;y2++){
+    var lo=-1, hi=-1;
+    for(x2=0;x2<w;x2++){ if(lab[y2*w+x2]===bestId){ if(lo<0) lo=x2; hi=x2; } }
+    if(lo>=0){
+      pts.push({x:lo,y:y2}); pts.push({x:hi,y:y2});
+      if(lo===0) edgeTouch++; if(hi===w-1) edgeTouch++;
+    }
+  }
+  for(x2=0;x2<w;x2++){ if(lab[x2]===bestId) edgeTouch++; if(lab[(h-1)*w+x2]===bestId) edgeTouch++; }
+  return {pts:pts, area:bestN, edge:edgeTouch};
+}
+function cross(o,a,b){ return (a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x); }
+function hull(points){
+  var p = points.slice().sort(function(a,b){ return a.x-b.x || a.y-b.y; });
+  if(p.length<3) return p;
+  var lower=[], upper=[], i;
+  for(i=0;i<p.length;i++){
+    while(lower.length>=2 && cross(lower[lower.length-2],lower[lower.length-1],p[i])<=0) lower.pop();
+    lower.push(p[i]);
+  }
+  for(i=p.length-1;i>=0;i--){
+    while(upper.length>=2 && cross(upper[upper.length-2],upper[upper.length-1],p[i])<=0) upper.pop();
+    upper.push(p[i]);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+function polyArea(q){
+  var a=0;
+  for(var i=0;i<q.length;i++){ var j=(i+1)%q.length; a += q[i].x*q[j].y - q[j].x*q[i].y; }
+  return Math.abs(a)/2;
+}
+/* max-area quad inscribed in a convex hull (brute force on a thinned hull) */
+function maxQuad(H){
+  var pts = H;
+  if(pts.length > 22){
+    var step = pts.length/22, thin=[];
+    for(var s=0;s<22;s++) thin.push(pts[Math.floor(s*step)]);
+    pts = thin;
+  }
+  var n=pts.length, best=null, bestA=0;
+  if(n<4) return null;
+  for(var a=0;a<n-3;a++) for(var b=a+1;b<n-2;b++) for(var c=b+1;c<n-1;c++) for(var d=c+1;d<n;d++){
+    var q=[pts[a],pts[b],pts[c],pts[d]], ar=polyArea(q);
+    if(ar>bestA){ bestA=ar; best=q; }
+  }
+  return best;
+}
+function orderQuad(q){
+  var cx=0, cy=0, i;
+  for(i=0;i<4;i++){ cx+=q[i].x/4; cy+=q[i].y/4; }
+  var s = q.slice().sort(function(a,b){
+    return Math.atan2(a.y-cy,a.x-cx) - Math.atan2(b.y-cy,b.x-cx);
+  });
+  /* rotate so the first point is the top-left-most */
+  var bi=0, bv=1e9;
+  for(i=0;i<4;i++){ var v=s[i].x+s[i].y; if(v<bv){ bv=v; bi=i; } }
+  return [s[bi], s[(bi+1)%4], s[(bi+2)%4], s[(bi+3)%4]];
+}
+function angleOk(q){
+  for(var i=0;i<4;i++){
+    var p0=q[(i+3)%4], p1=q[i], p2=q[(i+1)%4];
+    var v1={x:p0.x-p1.x,y:p0.y-p1.y}, v2={x:p2.x-p1.x,y:p2.y-p1.y};
+    var m1=Math.hypot(v1.x,v1.y), m2=Math.hypot(v2.x,v2.y);
+    if(m1<1||m2<1) return false;
+    var c=(v1.x*v2.x+v1.y*v2.y)/(m1*m2);
+    if(Math.abs(c)>0.66) return false;   /* keep angles roughly 48-132 deg */
+  }
+  return true;
+}
+var workC = makeCanvas(1,1), workX = workC.getContext('2d', {willReadFrequently:true});
+
+/* returns {quad:[4 pts in source pixels], reason:string|null} */
+function findPage(source, sw, sh){
+  var W = 220, H = Math.max(1, Math.round(sh * (W/sw)));
+  workC.width=W; workC.height=H;
+  workX.drawImage(source, 0, 0, W, H);
+  var img = workX.getImageData(0,0,W,H);
+  var g = blur(toGray(img), W, H);
+  var thr = otsu(g);
+  var i, best=null, bestScore=0, bestReason='Point the camera at a page';
+
+  /* try page-lighter-than-background, then the inverse */
+  var polarity = [1,-1];
+  for(var pi=0; pi<2; pi++){
+    var mask = new Uint8Array(W*H);
+    for(i=0;i<g.length;i++){
+      mask[i] = (polarity[pi]===1 ? (g[i] > thr) : (g[i] <= thr)) ? 1 : 0;
+    }
+    var blob = largestBlob(mask, W, H);
+    if(!blob) continue;
+    var frac = blob.area/(W*H);
+    if(frac < 0.10){ bestReason = 'Move the camera closer'; continue; }
+    if(blob.edge > (W+H)*0.55){ bestReason = 'Fit the whole page in frame'; continue; }
+    var Hu = hull(blob.pts);
+    var q = maxQuad(Hu);
+    if(!q) continue;
+    q = orderQuad(q);
+    var qa = polyArea(q), ha = polyArea(Hu);
+    if(ha<=0 || qa/ha < 0.78){ bestReason = 'Flatten the page'; continue; }
+    if(!angleOk(q)){ bestReason = 'Square up over the page'; continue; }
+    var score = qa/(W*H);
+    if(score < 0.10){ bestReason = 'Move the camera closer'; continue; }
+    if(score > bestScore){ bestScore = score; best = q; }
+  }
+  if(!best) return {quad:null, reason:bestReason};
+  var kx = sw/W, ky = sh/H;
+  return {quad: best.map(function(p){ return {x:p.x*kx, y:p.y*ky}; }), reason:null};
+}
+
+/* ============================================================
+   2. PERSPECTIVE UNWARP
+   ============================================================ */
+function solve(A, b){
+  var n = b.length, i, j, k;
+  for(i=0;i<n;i++){
+    var mx=i;
+    for(j=i+1;j<n;j++) if(Math.abs(A[j][i])>Math.abs(A[mx][i])) mx=j;
+    var tmp=A[i]; A[i]=A[mx]; A[mx]=tmp;
+    var tb=b[i]; b[i]=b[mx]; b[mx]=tb;
+    if(Math.abs(A[i][i])<1e-10) return null;
+    for(j=i+1;j<n;j++){
+      var f=A[j][i]/A[i][i];
+      for(k=i;k<n;k++) A[j][k] -= f*A[i][k];
+      b[j] -= f*b[i];
+    }
+  }
+  var x=new Array(n);
+  for(i=n-1;i>=0;i--){
+    var s=b[i];
+    for(j=i+1;j<n;j++) s -= A[i][j]*x[j];
+    x[i]=s/A[i][i];
+  }
+  return x;
+}
+/* homography mapping destination rect -> source quad */
+function homography(dst, src){
+  var A=[], b=[];
+  for(var i=0;i<4;i++){
+    var X=dst[i].x, Y=dst[i].y, u=src[i].x, v=src[i].y;
+    A.push([X,Y,1,0,0,0,-X*u,-Y*u]); b.push(u);
+    A.push([0,0,0,X,Y,1,-X*v,-Y*v]); b.push(v);
+  }
+  var h = solve(A,b);
+  if(!h) return null;
+  h.push(1);
+  return h;
+}
+function unwarp(srcCanvas, quad){
+  var wTop = Math.hypot(quad[1].x-quad[0].x, quad[1].y-quad[0].y);
+  var wBot = Math.hypot(quad[2].x-quad[3].x, quad[2].y-quad[3].y);
+  var hL   = Math.hypot(quad[3].x-quad[0].x, quad[3].y-quad[0].y);
+  var hR   = Math.hypot(quad[2].x-quad[1].x, quad[2].y-quad[1].y);
+  var fit = fitCanvas(Math.max(wTop,wBot), Math.max(hL,hR), MAX_OUT);
+  var W = fit.w, H = fit.h;
+  var h = homography([{x:0,y:0},{x:W,y:0},{x:W,y:H},{x:0,y:H}], quad);
+  if(!h) return null;
+
+  var sx = srcCanvas.getContext('2d', {willReadFrequently:true});
+  var s = sx.getImageData(0,0,srcCanvas.width,srcCanvas.height);
+  var sd = s.data, sw = s.width, sh = s.height;
+  var out = makeCanvas(W,H);
+  var ox = out.getContext('2d');
+  var o = ox.createImageData(W,H), od = o.data;
+
+  for(var y=0;y<H;y++){
+    for(var x=0;x<W;x++){
+      var d = h[6]*x + h[7]*y + 1;
+      var u = (h[0]*x + h[1]*y + h[2]) / d;
+      var v = (h[3]*x + h[4]*y + h[5]) / d;
+      var i = (y*W + x)*4;
+      if(u < -0.5 || v < -0.5 || u > sw-0.5 || v > sh-0.5){
+        od[i]=250; od[i+1]=248; od[i+2]=242; od[i+3]=255; continue;
+      }
+      u = Math.max(0, Math.min(sw-1, u));
+      v = Math.max(0, Math.min(sh-1, v));
+      var x0=u|0, y0=v|0, x1=Math.min(sw-1,x0+1), y1=Math.min(sh-1,y0+1);
+      var fx=u-x0, fy=v-y0;
+      var a=(y0*sw+x0)*4, b2=(y0*sw+x1)*4, c=(y1*sw+x0)*4, dd=(y1*sw+x1)*4;
+      for(var k=0;k<3;k++){
+        var top = sd[a+k]*(1-fx) + sd[b2+k]*fx;
+        var bot = sd[c+k]*(1-fx) + sd[dd+k]*fx;
+        od[i+k] = top*(1-fy) + bot*fy;
+      }
+      od[i+3]=255;
+    }
+  }
+  ox.putImageData(o,0,0);
+  return out;
+}
+
+/* ============================================================
+   3. FILTERS
+   ============================================================ */
+function applyFilter(srcCanvas, id){
+  if(id==='original') return srcCanvas;
+  var W=srcCanvas.width, H=srcCanvas.height;
+  var sx = srcCanvas.getContext('2d', {willReadFrequently:true});
+  var img = sx.getImageData(0,0,W,H), d=img.data, i, n=W*H;
+
+  if(id==='gray' || id==='enhance'){
+    var lum = new Float32Array(n), hist=new Array(256), j;
+    for(j=0;j<256;j++) hist[j]=0;
+    for(i=0;i<n;i++){
+      var L = 0.299*d[i*4] + 0.587*d[i*4+1] + 0.114*d[i*4+2];
+      lum[i]=L; hist[L|0]++;
+    }
+    /* percentile stretch so paper reads white and ink reads black */
+    var lo=0, hi=255, cum=0, loT=n*0.02, hiT=n*0.985;
+    for(j=0;j<256;j++){ cum+=hist[j]; if(cum>=loT){ lo=j; break; } }
+    cum=0;
+    for(j=0;j<256;j++){ cum+=hist[j]; if(cum>=hiT){ hi=j; break; } }
+    if(hi-lo < 24){ lo=0; hi=255; }
+    var scale = 255/(hi-lo);
+    for(i=0;i<n;i++){
+      if(id==='gray'){
+        var v = Math.max(0, Math.min(255, (lum[i]-lo)*scale));
+        d[i*4]=d[i*4+1]=d[i*4+2]=v;
+      } else {
+        for(var k=0;k<3;k++){
+          var c = Math.max(0, Math.min(255, (d[i*4+k]-lo)*scale));
+          d[i*4+k] = c;
+        }
+      }
+    }
+  }
+
+  if(id==='bw'){
+    /* adaptive threshold via integral image -- keeps text crisp under uneven light */
+    var gray = new Float32Array(n);
+    for(i=0;i<n;i++) gray[i] = 0.299*d[i*4] + 0.587*d[i*4+1] + 0.114*d[i*4+2];
+    var integ = new Float64Array((W+1)*(H+1));
+    for(var y=0;y<H;y++){
+      var rs=0;
+      for(var x=0;x<W;x++){
+        rs += gray[y*W+x];
+        integ[(y+1)*(W+1)+(x+1)] = integ[y*(W+1)+(x+1)] + rs;
+      }
+    }
+    var r = Math.max(6, Math.round(Math.min(W,H)/24));
+    for(var y2=0;y2<H;y2++){
+      var y0=Math.max(0,y2-r), y1=Math.min(H-1,y2+r);
+      for(var x2=0;x2<W;x2++){
+        var x0=Math.max(0,x2-r), x1=Math.min(W-1,x2+r);
+        var cnt=(x1-x0+1)*(y1-y0+1);
+        var sum = integ[(y1+1)*(W+1)+(x1+1)] - integ[y0*(W+1)+(x1+1)]
+                - integ[(y1+1)*(W+1)+x0] + integ[y0*(W+1)+x0];
+        var mean = sum/cnt;
+        var idx = y2*W+x2;
+        var val = gray[idx] < mean - 9 ? 0 : 255;
+        d[idx*4]=d[idx*4+1]=d[idx*4+2]=val;
+      }
+    }
+  }
+
+  var out = makeCanvas(W,H);
+  out.getContext('2d').putImageData(img,0,0);
+  return out;
+}
+function renderPage(p){
+  var base = applyFilter(cropTo(p), p.filter);
+  if(p.rot % 360 !== 0){
+    var r = ((p.rot % 360) + 360) % 360;
+    var swap = (r===90 || r===270);
+    var c = makeCanvas(swap?base.height:base.width, swap?base.width:base.height);
+    var x = c.getContext('2d');
+    x.translate(c.width/2, c.height/2);
+    x.rotate(r*Math.PI/180);
+    x.drawImage(base, -base.width/2, -base.height/2);
+    base = c;
+  }
+  p.out = base;
+  return base;
+}
+function cropTo(p){
+  if(!p.warped || p.dirty){
+    p.warped = unwarp(p.src, p.quad) || p.src;
+    p.dirty = false;
+  }
+  return p.warped;
+}
+
+/* ============================================================
+   4. CAMERA
+   ============================================================ */
+function drawOverlay(quad, progress){
+  var w = overlay.clientWidth, h = overlay.clientHeight;
+  if(overlay.width !== w*devicePixelRatio){ overlay.width = w*devicePixelRatio; overlay.height = h*devicePixelRatio; }
+  octx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  octx.clearRect(0,0,w,h);
+  if(!quad) return;
+
+  /* video is object-fit:cover -- mirror that transform */
+  var vw = video.videoWidth, vh = video.videoHeight;
+  if(!vw || !vh) return;
+  var s = Math.max(w/vw, h/vh);
+  var ox = (w - vw*s)/2, oy = (h - vh*s)/2;
+  var P = quad.map(function(p){ return {x:p.x*s+ox, y:p.y*s+oy}; });
+
+  octx.save();
+  octx.beginPath();
+  octx.moveTo(P[0].x,P[0].y);
+  for(var i=1;i<4;i++) octx.lineTo(P[i].x,P[i].y);
+  octx.closePath();
+  octx.fillStyle = 'rgba(35,211,196,0.14)';
+  octx.fill();
+  octx.strokeStyle = progress>0 ? '#f2a93b' : '#23d3c4';
+  octx.lineWidth = 2.5;
+  octx.stroke();
+  /* registration brackets on each corner */
+  octx.lineWidth = 4;
+  for(i=0;i<4;i++){
+    var a=P[i], b=P[(i+1)%4], c=P[(i+3)%4];
+    octx.beginPath();
+    octx.moveTo(a.x + (b.x-a.x)*0.16, a.y + (b.y-a.y)*0.16);
+    octx.lineTo(a.x, a.y);
+    octx.lineTo(a.x + (c.x-a.x)*0.16, a.y + (c.y-a.y)*0.16);
+    octx.stroke();
+  }
+  octx.restore();
+}
+function quadDrift(a,b){
+  if(!a||!b) return 1e9;
+  var m=0;
+  for(var i=0;i<4;i++) m = Math.max(m, Math.hypot(a[i].x-b[i].x, a[i].y-b[i].y));
+  return m;
+}
+var frameC = makeCanvas(1,1), frameX = frameC.getContext('2d', {willReadFrequently:true});
+function grabFrame(){
+  var vw=video.videoWidth, vh=video.videoHeight;
+  var f = fitCanvas(vw,vh,MAX_SRC);
+  frameC.width=f.w; frameC.height=f.h;
+  frameX.drawImage(video,0,0,f.w,f.h);
+  return frameC;
+}
+var lastRun = 0;
+function loop(ts){
+  rafId = requestAnimationFrame(loop);
+  if(!stream || capturing) return;
+  if(ts - lastRun < 90) return;
+  lastRun = ts;
+  if(!video.videoWidth) return;
+
+  var frame = grabFrame();
+  var res = findPage(frame, frame.width, frame.height);
+  var quad = res.quad ? res.quad.map(function(p){
+    return {x:p.x*(video.videoWidth/frame.width), y:p.y*(video.videoHeight/frame.height)};
+  }) : null;
+
+  var progress = 0;
+  if(quad){
+    if(quadDrift(quad, lastQuad) < Math.min(video.videoWidth,video.videoHeight)*0.035){
+      if(!stableSince) stableSince = ts;
+      progress = Math.min(1, (ts - stableSince)/HOLD);
+    } else {
+      stableSince = 0;
+    }
+    lastQuad = quad; stableQuad = quad;
+    $('hint').textContent = autoMode
+      ? (progress>0 ? 'Hold still' : 'Page found')
+      : 'Page found \u2014 tap to capture';
+  } else {
+    stableSince = 0; lastQuad = null; stableQuad = null;
+    $('hint').textContent = res.reason;
+  }
+  if(!autoMode) progress = 0;
+  $('ring').setAttribute('stroke-dashoffset', String(289 - 289*progress));
+  drawOverlay(quad, progress);
+  setLamp(quad ? (progress>0?'wait':'ready') : 'off', quad ? 'Page found' : 'Searching');
+  if(autoMode && progress >= 1) capture();
+}
+function capture(){
+  if(capturing) return;
+  capturing = true;
+  setLamp('busy','Scanning');
+  $('camSweep').classList.add('run');
+  $('hint').style.opacity = '0';
+
+  var frame = grabFrame();
+  var keep = makeCanvas(frame.width, frame.height);
+  keep.getContext('2d').drawImage(frame,0,0);
+  var res = findPage(keep, keep.width, keep.height);
+  var quad = res.quad || fullQuad(keep);
+
+  setTimeout(function(){
+    addPage(keep, quad);
+    $('camSweep').classList.remove('run');
+    $('hint').style.opacity = '1';
+    $('ring').setAttribute('stroke-dashoffset','289');
+    stableSince = 0; lastQuad = null;
+    capturing = false;
+    if(navigator.vibrate) navigator.vibrate(18);
+    toast('Page ' + PAGES.length + ' captured');
+  }, 260);
+}
+function fullQuad(c){
+  var m = 0;
+  return [{x:m,y:m},{x:c.width-m,y:m},{x:c.width-m,y:c.height-m},{x:m,y:c.height-m}];
+}
+function startCam(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    toast('This browser has no camera access'); return;
+  }
+  show('cam');
+  $('hint').textContent = 'Starting camera';
+  navigator.mediaDevices.getUserMedia({
+    video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} },
+    audio:false
+  }).then(function(s){
+    stream = s; video.srcObject = s;
+    return video.play();
+  }).then(function(){
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(loop);
+  }).catch(function(){
+    show('tray'); updateCount();
+    toast('Camera is off \u2014 allow it in settings, or import a photo');
+  });
+}
+function stopCam(){
+  cancelAnimationFrame(rafId); rafId = 0;
+  if(stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+  video.srcObject = null;
+  show('tray'); updateCount();
+}
+
+/* ============================================================
+   5. TRAY
+   ============================================================ */
+function addPage(srcCanvas, quad){
+  var p = {src:srcCanvas, quad:quad, filter:'enhance', rot:0, dirty:true};
+  PAGES.push(p);
+  renderPage(p);
+  drawTray();
+  updateCount();
+}
+function drawTray(){
+  var host = $('pages');
+  host.innerHTML = '';
+  PAGES.forEach(function(p, i){
+    var card = document.createElement('button');
+    card.className = 'page-card';
+    card.setAttribute('aria-label','Edit page ' + (i+1));
+    var c = makeCanvas(1,1);
+    var f = fitCanvas(p.out.width, p.out.height, 420);
+    c.width=f.w; c.height=f.h;
+    c.getContext('2d').drawImage(p.out,0,0,f.w,f.h);
+    var tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.innerHTML = '<span>' + String(i+1).padStart(2,'0') + '</span><span>' +
+      p.out.width + '\u00d7' + p.out.height + '</span>';
+    card.appendChild(c); card.appendChild(tag);
+    card.addEventListener('click', function(){ openEdit(i); });
+    host.appendChild(card);
+  });
+}
+
+/* ============================================================
+   6. EDIT
+   ============================================================ */
+function openEdit(i){
+  current = i; cropping = false;
+  var p = PAGES[i];
+  $('editLabel').textContent = 'Page ' + (i+1) + ' of ' + PAGES.length;
+  buildFilters();
+  paintEdit();
+  show('edit');
+}
+function paintEdit(){
+  var p = PAGES[current];
+  var out = renderPage(p);
+  var f = fitCanvas(out.width, out.height, 1400);
+  editCanvas.width = f.w; editCanvas.height = f.h;
+  editCanvas.getContext('2d').drawImage(out,0,0,f.w,f.h);
+  cropLayer.hidden = true;
+  editCanvas.hidden = false;
+  $('cropDone').hidden = true;
+  $('tCrop').setAttribute('aria-pressed','false');
+  drawTray();
+}
+function buildFilters(){
+  var host = $('filters');
+  host.innerHTML = '';
+  FILTERS.forEach(function(f){
+    var b = document.createElement('button');
+    b.className = 'chip'; b.textContent = f.label;
+    b.setAttribute('aria-pressed', String(PAGES[current].filter===f.id));
+    b.addEventListener('click', function(){
+      PAGES[current].filter = f.id;
+      buildFilters(); paintEdit();
+    });
+    host.appendChild(b);
+  });
+}
+/* --- corner adjust --- */
+function startCrop(){
+  cropping = true;
+  var p = PAGES[current];
+  var f = fitCanvas(p.src.width, p.src.height, 1000);
+  editCanvas.width=f.w; editCanvas.height=f.h;
+  editCanvas.getContext('2d').drawImage(p.src,0,0,f.w,f.h);
+  cropLayer.width=f.w; cropLayer.height=f.h;
+  cropLayer.hidden=false;
+  var k = f.w/p.src.width;
+  cropPts = p.quad.map(function(q){ return {x:q.x*k, y:q.y*k}; });
+  $('cropDone').hidden = false;
+  $('tCrop').setAttribute('aria-pressed','true');
+  paintCrop();
+}
+function paintCrop(){
+  var x = cropLayer.getContext('2d');
+  x.clearRect(0,0,cropLayer.width,cropLayer.height);
+  x.beginPath();
+  x.moveTo(cropPts[0].x,cropPts[0].y);
+  for(var i=1;i<4;i++) x.lineTo(cropPts[i].x,cropPts[i].y);
+  x.closePath();
+  x.fillStyle='rgba(35,211,196,0.12)'; x.fill();
+  x.strokeStyle='#23d3c4'; x.lineWidth=Math.max(2, cropLayer.width/300); x.stroke();
+  for(i=0;i<4;i++){
+    x.beginPath();
+    x.arc(cropPts[i].x, cropPts[i].y, Math.max(9, cropLayer.width/44), 0, Math.PI*2);
+    x.fillStyle='#faf8f2'; x.fill();
+    x.strokeStyle='#17181a'; x.lineWidth=Math.max(2, cropLayer.width/340); x.stroke();
+  }
+}
+function layerPos(e){
+  var r = cropLayer.getBoundingClientRect();
+  var t = e.touches ? e.touches[0] : e;
+  return { x:(t.clientX-r.left) * (cropLayer.width/r.width),
+           y:(t.clientY-r.top)  * (cropLayer.height/r.height) };
+}
+function cropDown(e){
+  if(!cropping) return;
+  var p = layerPos(e), best=-1, bd=1e9;
+  for(var i=0;i<4;i++){
+    var d = Math.hypot(cropPts[i].x-p.x, cropPts[i].y-p.y);
+    if(d<bd){ bd=d; best=i; }
+  }
+  if(bd < cropLayer.width/8){ dragIdx=best; e.preventDefault(); }
+}
+function cropMove(e){
+  if(dragIdx<0) return;
+  e.preventDefault();
+  var p = layerPos(e);
+  cropPts[dragIdx] = {
+    x: Math.max(0, Math.min(cropLayer.width, p.x)),
+    y: Math.max(0, Math.min(cropLayer.height, p.y))
+  };
+  paintCrop();
+}
+function cropUp(){ dragIdx = -1; }
+function applyCrop(){
+  var p = PAGES[current];
+  var k = p.src.width/cropLayer.width;
+  p.quad = orderQuad(cropPts.map(function(q){ return {x:q.x*k, y:q.y*k}; }));
+  p.dirty = true;
+  cropping = false;
+  $('editSweep').classList.add('run');
+  setLamp('busy','Straightening');
+  setTimeout(function(){
+    paintEdit();
+    $('editSweep').classList.remove('run');
+    setLamp('ready','Ready');
+  }, 30);
+}
+
+/* ============================================================
+   7. EXPORT
+   ============================================================ */
+function jpegOf(canvas, q){ return canvas.toDataURL('image/jpeg', q || 0.86); }
+function buildPDF(){
+  if(!window.jspdf){ toast('PDF library did not load \u2014 check the connection'); return null; }
+  var JsPDF = window.jspdf.jsPDF;
+  var doc = null;
+  PAGES.forEach(function(p, i){
+    var c = p.out, land = c.width > c.height;
+    var o = land ? 'landscape' : 'portrait';
+    if(i===0){ doc = new JsPDF({orientation:o, unit:'pt', format:'letter'}); }
+    else { doc.addPage('letter', o); }
+    var pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+    var s = Math.min(pw/c.width, ph/c.height);
+    var w = c.width*s, h = c.height*s;
+    doc.addImage(jpegOf(c, 0.82), 'JPEG', (pw-w)/2, (ph-h)/2, w, h, undefined, 'FAST');
+  });
+  return doc;
+}
+function savePDF(){
+  setLamp('busy','Writing PDF');
+  setTimeout(function(){
+    var doc = buildPDF();
+    if(doc){ doc.save('flatbed-' + stamp() + '.pdf'); toast('PDF saved'); }
+    updateCount();
+  }, 20);
+}
+function saveJPG(){
+  PAGES.forEach(function(p, i){
+    var a = document.createElement('a');
+    a.href = jpegOf(p.out, 0.92);
+    a.download = 'flatbed-' + stamp() + '-' + String(i+1).padStart(2,'0') + '.jpg';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  });
+  toast(PAGES.length===1 ? 'JPG saved' : PAGES.length + ' JPGs saved');
+}
+function emailIt(){
+  setLamp('busy','Preparing');
+  setTimeout(function(){
+    var doc = buildPDF();
+    if(!doc){ updateCount(); return; }
+    var name = 'flatbed-' + stamp() + '.pdf';
+    var blob = doc.output('blob');
+    var file = new File([blob], name, {type:'application/pdf'});
+    var payload = {
+      files:[file],
+      title:name,
+      text:'Scanned with Flatbed on ' + stamp() + '. ' + PAGES.length +
+           (PAGES.length===1?' page.':' pages.')
+    };
+    if(navigator.canShare && navigator.canShare(payload) && navigator.share){
+      navigator.share(payload).then(function(){ toast('Handed to Mail'); })
+        .catch(function(){ /* the sheet was dismissed */ })
+        .then(function(){ updateCount(); });
+    } else {
+      doc.save(name);
+      var body = encodeURIComponent('The scan is attached.\n\n' + name +
+        ' just downloaded \u2014 attach it from your Downloads folder.\n\nScanned with Flatbed.');
+      window.location.href = 'mailto:?subject=' + encodeURIComponent('Scan \u2014 ' + stamp()) + '&body=' + body;
+      toast('PDF downloaded \u2014 attach it to the draft');
+      updateCount();
+    }
+  }, 20);
+}
+
+/* ============================================================
+   8. IMPORT
+   ============================================================ */
+function importFiles(list){
+  var files = Array.prototype.slice.call(list).filter(function(f){ return /^image\//.test(f.type); });
+  if(!files.length){ toast('Pick an image file'); return; }
+  setLamp('busy','Reading');
+  var pending = files.length;
+  files.forEach(function(f){
+    var url = URL.createObjectURL(f);
+    var img = new Image();
+    img.onload = function(){
+      var fit = fitCanvas(img.width, img.height, MAX_SRC);
+      var c = makeCanvas(fit.w, fit.h);
+      c.getContext('2d').drawImage(img,0,0,fit.w,fit.h);
+      URL.revokeObjectURL(url);
+      var res = findPage(c, c.width, c.height);
+      addPage(c, res.quad || fullQuad(c));
+      if(--pending === 0){ updateCount(); toast(files.length + (files.length===1?' page imported':' pages imported')); }
+    };
+    img.onerror = function(){
+      URL.revokeObjectURL(url);
+      if(--pending === 0) updateCount();
+      toast('That image would not open');
+    };
+    img.src = url;
+  });
+}
+
+/* ============================================================
+   9. WIRING
+   ============================================================ */
+$('scanBtn').addEventListener('click', startCam);
+$('closeCam').addEventListener('click', stopCam);
+$('shutter').addEventListener('click', function(){ if(!autoMode || !stableQuad) capture(); });
+$('autoBtn').addEventListener('click', function(){
+  autoMode = !autoMode;
+  this.setAttribute('aria-pressed', String(autoMode));
+  this.textContent = autoMode ? 'Auto' : 'Manual';
+  stableSince = 0;
+  $('ring').setAttribute('stroke-dashoffset','289');
+});
+$('importBtn').addEventListener('click', function(){ $('fileIn').click(); });
+$('fileIn').addEventListener('change', function(e){ importFiles(e.target.files); e.target.value=''; });
+$('pdfBtn').addEventListener('click', savePDF);
+$('jpgBtn').addEventListener('click', saveJPG);
+$('sendBtn').addEventListener('click', emailIt);
+
+$('editBack').addEventListener('click', function(){
+  if(cropping){ paintEdit(); cropping=false; return; }
+  show('tray'); updateCount();
+});
+$('cropDone').addEventListener('click', applyCrop);
+$('tCrop').addEventListener('click', function(){ cropping ? paintEdit() : startCrop(); });
+$('tRotate').addEventListener('click', function(){
+  if(cropping) return;
+  PAGES[current].rot = (PAGES[current].rot + 90) % 360;
+  paintEdit();
+});
+$('tReset').addEventListener('click', function(){
+  var p = PAGES[current];
+  p.quad = fullQuad(p.src); p.dirty = true; p.rot = 0;
+  if(cropping) startCrop(); else paintEdit();
+  toast('Using the full frame');
+});
+$('tDelete').addEventListener('click', function(){
+  openModal('Delete this page?', 'Page ' + (current+1) + ' is dropped from the tray.', 'Delete', function(){
+    PAGES.splice(current,1);
+    current = -1;
+    drawTray(); updateCount(); show('tray');
+    toast('Page deleted');
+  });
+});
+$('clearBtn').addEventListener('click', function(){
+  openModal('Clear the tray?', 'Every scanned page is dropped. This cannot be undone.', 'Clear', function(){
+    PAGES = []; current = -1;
+    drawTray(); updateCount();
+    toast('Tray cleared');
+  });
+});
+
+var modalAction = null;
+function openModal(title, body, ok, fn){
+  $('mTitle').textContent = title;
+  $('mBody').textContent = body;
+  $('mOk').textContent = ok;
+  modalAction = fn;
+  $('veil').classList.add('on');
+}
+function closeModal(){ $('veil').classList.remove('on'); modalAction = null; }
+$('mCancel').addEventListener('click', closeModal);
+$('mOk').addEventListener('click', function(){ if(modalAction) modalAction(); closeModal(); });
+$('veil').addEventListener('click', function(e){ if(e.target === $('veil')) closeModal(); });
+
+cropLayer.addEventListener('mousedown', cropDown);
+window.addEventListener('mousemove', cropMove);
+window.addEventListener('mouseup', cropUp);
+cropLayer.addEventListener('touchstart', cropDown, {passive:false});
+cropLayer.addEventListener('touchmove', cropMove, {passive:false});
+window.addEventListener('touchend', cropUp);
+
+window.addEventListener('beforeunload', function(e){
+  if(PAGES.length){ e.preventDefault(); e.returnValue = ''; }
+});
+document.addEventListener('visibilitychange', function(){
+  if(document.hidden && stream) stopCam();
+});
+
+updateCount();
+})();
+</script>
+</body>
+</html>
